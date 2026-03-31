@@ -963,9 +963,8 @@ class ClaudeCodeChatParticipant(BaseChatParticipant):
     def _create_client_options(self) -> ClaudeAgentOptions:
         claude_settings = self._host.nbi_config.claude_settings
 
-        # Determine which built-in toolsets are disabled
-        from notebook_intelligence.extension import GetCapabilitiesHandler
-        disabled = getattr(GetCapabilitiesHandler, 'disabled_tools', None) or []
+        # Determine which built-in toolsets are disabled (by config or by extensions)
+        disabled = self._host.get_disabled_builtin_toolsets() or []
 
         # Built-in tools grouped by toolset for filtering
         notebook_edit_tools = [create_new_notebook, add_markdown_cell, add_code_cell, get_number_of_cells, get_cell_type_and_source, get_cell_output, set_cell_type_and_source, delete_cell, insert_cell, save_notebook, rename_notebook, open_file_in_jupyter_ui]

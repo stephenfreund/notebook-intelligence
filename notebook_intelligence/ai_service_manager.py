@@ -47,6 +47,7 @@ class AIServiceManager(Host):
         self.completion_context_providers: Dict[str, CompletionContextProvider] = {}
         self.telemetry_listeners: Dict[str, TelemetryListener] = {}
         self._extension_toolsets: Dict[str, list[Toolset]] = {}
+        self._disabled_builtin_toolsets: list[str] = []
         self._options = options.copy()
         self._nbi_config = NBIConfig({"server_root_dir": self._options.get('server_root_dir', '')})
         self._openai_compatible_llm_provider = OpenAICompatibleLLMProvider()
@@ -232,11 +233,18 @@ class AIServiceManager(Host):
         log.debug(f"Registered toolset '{toolset.id}' from provider '{provider_id}'.")
 
     def disable_builtin_toolset(self, toolset_id: str) -> None:
-        from notebook_intelligence.extension import GetCapabilitiesHandler
-        if GetCapabilitiesHandler.disabled_tools is None:
-            GetCapabilitiesHandler.disabled_tools = []
-        if toolset_id not in GetCapabilitiesHandler.disabled_tools:
-            GetCapabilitiesHandler.disabled_tools.append(toolset_id)
+        # Store on self (not GetCapabilitiesHandler, which gets overwritten by _setup_handlers)
+        if toolset_id not in self._disabled_builtin_toolsets:
+            self._disabled_builtin_toolsets.append(toolset_id)
+        # Also update GetCapabilitiesHandler for the non-Claude path (best-effort)
+        try:
+            from notebook_intelligence.extension import GetCapabilitiesHandler
+            if GetCapabilitiesHandler.disabled_tools is None:
+                GetCapabilitiesHandler.disabled_tools = []
+            if toolset_id not in GetCapabilitiesHandler.disabled_tools:
+                GetCapabilitiesHandler.disabled_tools.append(toolset_id)
+        except Exception:
+            pass
         log.debug(f"Disabled built-in toolset '{toolset_id}'.")
 
     @property
@@ -462,6 +470,9 @@ class AIServiceManager(Host):
 
     def get_extension_toolsets(self) -> Dict[str, list[Toolset]]:
         return self._extension_toolsets
+
+    def get_disabled_builtin_toolsets(self) -> list[str]:
+        return list(self._disabled_builtin_toolsets)
     
     def get_extension_toolset(self, extension_id: str, toolset_id: str) -> Toolset:
         if extension_id not in self._extension_toolsets:

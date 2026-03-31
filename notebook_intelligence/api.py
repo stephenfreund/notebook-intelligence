@@ -846,6 +846,9 @@ class Host:
     def get_extension_toolsets(self) -> dict:
         return NotImplemented
 
+    def get_disabled_builtin_toolsets(self) -> list:
+        return NotImplemented
+
     @property
     def nbi_config(self) -> NBIConfig:
         raise NotImplemented

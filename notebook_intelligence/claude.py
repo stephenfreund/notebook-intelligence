@@ -654,7 +654,7 @@ async def get_number_of_cells(args) -> str:
 
     return tool_text_response(ui_cmd_response)
 
-@tool("get-cell-type-and-source", "Gets the type and source of the cell at index.", {"cell_index": int})
+@tool("get-cell-type-and-source", "Gets the type, source, and metadata of the cell at index.", {"cell_index": int})
 async def get_cell_type_and_source(args) -> str:
     """Get cell type and source for the cell at index for the active notebook.
 
@@ -962,18 +962,52 @@ class ClaudeCodeChatParticipant(BaseChatParticipant):
     
     def _create_client_options(self) -> ClaudeAgentOptions:
         claude_settings = self._host.nbi_config.claude_settings
-        self._jupyter_ui_tools_mcp_server = create_sdk_mcp_server(
-            name="nbi",
-            version="1.0.0",
-            tools=[create_new_notebook, add_markdown_cell, add_code_cell, get_number_of_cells, get_cell_type_and_source, get_cell_output, set_cell_type_and_source, delete_cell, insert_cell, run_cell, save_notebook, rename_notebook, run_command_in_jupyter_terminal, open_file_in_jupyter_ui]
-        )
-        mcp_servers = {}
+
+        # Determine which built-in toolsets are disabled
+        from notebook_intelligence.extension import GetCapabilitiesHandler
+        disabled = getattr(GetCapabilitiesHandler, 'disabled_tools', None) or []
+
+        # Built-in tools grouped by toolset for filtering
+        notebook_edit_tools = [create_new_notebook, add_markdown_cell, add_code_cell, get_number_of_cells, get_cell_type_and_source, get_cell_output, set_cell_type_and_source, delete_cell, insert_cell, save_notebook, rename_notebook, open_file_in_jupyter_ui]
+        notebook_edit_allowed = ["mcp__nbi__create-new-notebook", "mcp__nbi__add-markdown-cell", "mcp__nbi__add-code-cell", "mcp__nbi__get-number-of-cells", "mcp__nbi__get-cell-type-and-source", "mcp__nbi__get-cell-output", "mcp__nbi__set-cell-type-and-source", "mcp__nbi__insert-cell", "mcp__nbi__save-notebook", "mcp__nbi__rename-notebook", "mcp__nbi__open-file-in-jupyter-ui"]
+        notebook_execute_tools = [run_cell]
+        notebook_execute_allowed = ["mcp__nbi__run-cell"]
+        other_tools = [run_command_in_jupyter_terminal]
+        other_allowed = ["mcp__nbi__run-command-in-jupyter-terminal"]
+
+        # Assemble built-in tools, excluding disabled toolsets
+        builtin_tools = []
+        allowed_tools = []
         jupyter_ui_tools_enabled = ClaudeToolType.JupyterUITools in claude_settings.get('tools', [])
         if jupyter_ui_tools_enabled:
+            if "nbi-notebook-edit" not in disabled:
+                builtin_tools.extend(notebook_edit_tools)
+                allowed_tools.extend(notebook_edit_allowed)
+            if "nbi-notebook-execute" not in disabled:
+                builtin_tools.extend(notebook_execute_tools)
+                allowed_tools.extend(notebook_execute_allowed)
+            # Other tools (terminal, etc.) are not part of a disableable toolset
+            builtin_tools.extend(other_tools)
+            allowed_tools.extend(other_allowed)
+
+        # Add extension tools
+        extension_toolsets = self._host.get_extension_toolsets()
+        for ext_id, toolsets in extension_toolsets.items():
+            for toolset in toolsets:
+                for ext_tool in toolset.tools:
+                    wrapped = self._wrap_extension_tool(ext_tool)
+                    builtin_tools.append(wrapped)
+                    allowed_tools.append(f"mcp__nbi__{ext_tool.name}")
+
+        mcp_servers = {}
+        if len(builtin_tools) > 0:
+            self._jupyter_ui_tools_mcp_server = create_sdk_mcp_server(
+                name="nbi",
+                version="1.0.0",
+                tools=builtin_tools
+            )
             mcp_servers["nbi"] = self._jupyter_ui_tools_mcp_server
-        allowed_tools = []
-        if jupyter_ui_tools_enabled:
-            allowed_tools.extend(["mcp__nbi__create-new-notebook", "mcp__nbi__add-markdown-cell", "mcp__nbi__add-code-cell", "mcp__nbi__get-number-of-cells", "mcp__nbi__get-cell-type-and-source", "mcp__nbi__get-cell-output", "mcp__nbi__set-cell-type-and-source", "mcp__nbi__insert-cell", "mcp__nbi__save-notebook", "mcp__nbi__rename-notebook", "mcp__nbi__open-file-in-jupyter-ui"])
+
         setting_sources = claude_settings.get('setting_sources')
         chat_model_id = claude_settings.get('chat_model', '').strip()
         if chat_model_id == "":
@@ -1005,13 +1039,49 @@ class ClaudeCodeChatParticipant(BaseChatParticipant):
         return client_options
 
     def _create_system_prompt(self, jupyter_ui_tools_enabled: bool) -> str:
+        ext_instructions = ""
+        extension_toolsets = self._host.get_extension_toolsets()
+        for ext_id, toolsets in extension_toolsets.items():
+            for toolset in toolsets:
+                if toolset.instructions:
+                    ext_instructions += toolset.instructions + "\n"
+
         return f"""You are an AI programming assistant integrated into JupyterLab which is an IDE for Jupyter notebooks.
 Assume Python if the language is not specified.
 JupyterLab is launched from a working directory and it can only access files in this directory and its subdirectories. Follow the same rule for file system access. Working directory for current session is '{get_jupyter_root_dir()}'.
 If messages contain relative file paths, assume they are relative to the working directory.
 If you need to install a Python package within a notebook cell code, use %pip install <package_name> instead of !pip install <package_name>.
 {JUPYTER_UI_TOOLS_SYSTEM_PROMPT if jupyter_ui_tools_enabled else ""}
-"""
+{ext_instructions}"""
+
+    def _wrap_extension_tool(self, ext_tool):
+        """Bridge an NBI extension Tool to a claude_agent_sdk @tool for the MCP server."""
+        params = ext_tool.schema.get("function", {}).get("parameters", {})
+        props = params.get("properties", {})
+        # Build type mapping for claude_agent_sdk @tool decorator
+        type_map = {}
+        for prop_name, prop_schema in props.items():
+            prop_type = prop_schema.get("type", "string")
+            if prop_type == "integer":
+                type_map[prop_name] = int
+            elif prop_type == "number":
+                type_map[prop_name] = float
+            elif prop_type == "boolean":
+                type_map[prop_name] = bool
+            elif prop_type == "array":
+                type_map[prop_name] = list
+            elif prop_type == "object":
+                type_map[prop_name] = dict
+            else:
+                type_map[prop_name] = str
+
+        @tool(ext_tool.name, ext_tool.description, type_map)
+        async def wrapper(args) -> str:
+            response = get_current_response()
+            request = get_current_request()
+            result = await ext_tool.handle_tool_call(request, response, {}, args)
+            return tool_text_response(str(result))
+        return wrapper
 
     def clear_chat_history(self):
         self._client.clear_chat_history()

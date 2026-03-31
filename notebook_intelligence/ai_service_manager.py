@@ -231,6 +231,14 @@ class AIServiceManager(Host):
         self._extension_toolsets[provider_id].append(toolset)
         log.debug(f"Registered toolset '{toolset.id}' from provider '{provider_id}'.")
 
+    def disable_builtin_toolset(self, toolset_id: str) -> None:
+        from notebook_intelligence.extension import GetCapabilitiesHandler
+        if GetCapabilitiesHandler.disabled_tools is None:
+            GetCapabilitiesHandler.disabled_tools = []
+        if toolset_id not in GetCapabilitiesHandler.disabled_tools:
+            GetCapabilitiesHandler.disabled_tools.append(toolset_id)
+        log.debug(f"Disabled built-in toolset '{toolset_id}'.")
+
     @property
     def default_chat_participant(self) -> ChatParticipant:
         return self._default_chat_participant

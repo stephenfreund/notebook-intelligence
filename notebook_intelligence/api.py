@@ -840,6 +840,12 @@ class Host:
     def register_toolset(self, toolset: Toolset) -> None:
         raise NotImplemented
 
+    def disable_builtin_toolset(self, toolset_id: str) -> None:
+        raise NotImplemented
+
+    def get_extension_toolsets(self) -> dict:
+        return NotImplemented
+
     @property
     def nbi_config(self) -> NBIConfig:
         raise NotImplemented

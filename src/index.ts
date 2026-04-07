@@ -1211,9 +1211,11 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         const np = app.shell.currentWidget as NotebookPanel;
         const model = np.model.sharedModel;
 
+        const cell = model.cells[args.cellIndex as number];
         return {
-          type: model.cells[args.cellIndex as number].cell_type,
-          source: model.cells[args.cellIndex as number].source
+          type: cell.cell_type,
+          source: cell.source,
+          metadata: cell.metadata
         };
       }
     });

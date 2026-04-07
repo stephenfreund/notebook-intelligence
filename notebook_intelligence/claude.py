@@ -913,8 +913,11 @@ class ClaudeCodeChatParticipant(BaseChatParticipant):
         server_info = self._client.server_info
         if server_info is not None:
             commands = server_info.get('commands', [])
+            seen = {c.name for c in participant_commands}
             for command in commands:
-                participant_commands.append(ChatCommand(name=command['name'], description=command['description']))
+                if command['name'] not in seen:
+                    participant_commands.append(ChatCommand(name=command['name'], description=command['description']))
+                    seen.add(command['name'])
             return participant_commands
         else:
             return [

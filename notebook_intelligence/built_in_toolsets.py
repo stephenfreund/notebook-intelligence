@@ -72,7 +72,7 @@ async def get_number_of_cells(**args) -> str:
 @nbapi.auto_approve
 @nbapi.tool
 async def get_cell_type_and_source(cell_index: int, **args) -> str:
-    """Get cell type and source for the cell at index for the active notebook.
+    """Get cell type, source, and metadata for the cell at index for the active notebook.
 
     Args:
         cell_index: Zero based cell index

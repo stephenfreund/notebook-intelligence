@@ -88,7 +88,6 @@ class AIServiceManager(Host):
 
     def initialize(self):
         self.chat_participants = {}
-        self._claude_code_chat_participant = ClaudeCodeChatParticipant(self)
         self.register_llm_provider(GitHubCopilotLLMProvider())
         self.register_llm_provider(self._openai_compatible_llm_provider)
         self.register_llm_provider(self._litellm_compatible_llm_provider)
@@ -97,8 +96,11 @@ class AIServiceManager(Host):
         for participant in self._mcp_manager.get_mcp_participants():
             self.register_chat_participant(participant)
 
-        self.update_models_from_config()
+        # Extensions must be initialized before ClaudeCodeChatParticipant,
+        # because it reads extension toolsets in _create_client_options().
         self.initialize_extensions()
+        self._claude_code_chat_participant = ClaudeCodeChatParticipant(self)
+        self.update_models_from_config()
 
     def update_models_from_config(self):
         using_github_copilot_service = self.nbi_config.using_github_copilot_service

@@ -43,10 +43,12 @@ class SecuredExtensionTool(Tool):
         return self._ext_tool.schema
     
     def pre_invoke(self, request: ChatRequest, tool_args: dict) -> Union[ToolPreInvokeResponse, None]:
-        confirmationTitle = "Approve"
-        confirmationMessage = "Are you sure you want to call this extension tool?"
+        # Respect the underlying tool's auto_approve setting
+        auto_approve = getattr(self._ext_tool, '_auto_approve', False)
+        confirmationTitle = None if auto_approve else "Approve"
+        confirmationMessage = None if auto_approve else "Are you sure you want to call this tool?"
         return ToolPreInvokeResponse(
-            message = f"Calling extension tool '{self.name}'",
+            message = f"Calling tool '{self.name}'",
             detail = {"title": "Parameters", "content": json.dumps(tool_args)},
             confirmationTitle = confirmationTitle,
             confirmationMessage = confirmationMessage

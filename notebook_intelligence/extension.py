@@ -619,10 +619,21 @@ class WebsocketCopilotHandler(websocket.WebSocketHandler):
             additionalContext = data.get('additionalContext', [])
             chat_mode = ChatMode('agent', 'Agent') if data.get('chatMode', 'ask') == 'agent' else ChatMode('ask', 'Ask')
             toolSelections = data.get('toolSelections', {})
+            extension_tools = toolSelections.get('extensions', {})
+
+            # Auto-include all extension tools in agent mode if none are
+            # explicitly selected. This ensures NBI extension tools (like
+            # FlowBook) are available without manual tool picker selection.
+            if chat_mode.id == 'agent' and not extension_tools:
+                for ext_id, toolsets in ai_service_manager.get_extension_toolsets().items():
+                    extension_tools[ext_id] = {}
+                    for toolset in toolsets:
+                        extension_tools[ext_id][toolset.id] = [t.name for t in toolset.tools]
+
             tool_selection = RequestToolSelection(
                 built_in_toolsets=toolSelections.get('builtinToolsets', []),
                 mcp_server_tools=toolSelections.get('mcpServers', {}),
-                extension_tools=toolSelections.get('extensions', {})
+                extension_tools=extension_tools
             )
 
             is_claude_code_mode = ai_service_manager.is_claude_code_mode

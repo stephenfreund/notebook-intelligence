@@ -3,7 +3,7 @@
 import asyncio
 import json
 from typing import Any, Callable, Dict, Union, Optional
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 import uuid
 from fuzzy_json import loads as fuzzy_json_loads
@@ -326,6 +326,28 @@ class ChatCommand:
     name: str = ''
     description: str = ''
 
+
+@dataclass
+class ToolContent:
+    """Structured tool-call result for multi-part content (text + images).
+
+    Extension tools that want to return images or rich content can return
+    a `ToolContent` instead of a plain string. The participant wrappers
+    translate it into the native format for the active provider:
+
+      - Claude (ClaudeCodeChatParticipant) → multi-part tool_result blocks.
+      - OpenAI-compatible providers with vision support → content array.
+      - Others → `text_summary` fallback (images still readable as data URIs
+        but not seen as image vision by the model).
+
+    blocks: ordered list of `{"type":"text", "text":...}` and
+            `{"type":"image", "mime":..., "data":base64}` dicts.
+    text_summary: stringified form for surfaces that can't handle structured
+                  content.
+    """
+    blocks: list = field(default_factory=list)
+    text_summary: str = ''
+
 class Tool:
     @property
     def name(self) -> str:
@@ -484,6 +506,42 @@ class MCPServer:
     
     def get_prompt_value(self, prompt_name: str, prompt_args: dict = {}) -> list[dict]:
         return NotImplemented
+
+# Providers known to accept OpenAI-style content arrays (list of
+# text + image_url items) in role=tool messages. Others fall back to the
+# ToolContent.text_summary string so the model still gets readable output.
+_PROVIDERS_SUPPORTING_STRUCTURED_TOOL_RESULTS = {"openai-compatible", "litellm"}
+
+
+def _render_tool_content(request: 'ChatRequest', content: 'ToolContent'):
+    """Render a ToolContent for the active provider.
+
+    Returns either an OpenAI content array (list[dict]) when the provider
+    is known to support multi-part tool results, or the plain text summary
+    string otherwise. Callers place the result into the message `content`
+    field of the tool reply.
+    """
+    try:
+        provider_id = request.host.chat_model.provider.id
+    except Exception:
+        provider_id = None
+    if provider_id in _PROVIDERS_SUPPORTING_STRUCTURED_TOOL_RESULTS:
+        out = []
+        for b in content.blocks:
+            btype = b.get("type")
+            if btype == "text":
+                out.append({"type": "text", "text": b.get("text", "")})
+            elif btype == "image":
+                mime = b.get("mime", "image/png")
+                data = b.get("data", "")
+                out.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{data}"},
+                })
+        if out:
+            return out
+    return content.text_summary or ""
+
 
 def auto_approve(tool: SimpleTool):
     """
@@ -645,9 +703,14 @@ class ChatParticipant:
 
                     tool_call_response = await tool_to_call.handle_tool_call(request, response, tool_context, args)
 
+                    if isinstance(tool_call_response, ToolContent):
+                        content = _render_tool_content(request, tool_call_response)
+                    else:
+                        content = str(tool_call_response)
+
                     function_call_result_message = {
                         "role": "tool",
-                        "content": str(tool_call_response),
+                        "content": content,
                         "tool_call_id": tool_call['id']
                     }
 

@@ -12,7 +12,7 @@ import uuid
 import re
 from anyio.abc import Process
 from anthropic import Anthropic
-from notebook_intelligence.api import AskUserQuestionData, BackendMessageType, CancelToken, ChatCommand, ChatModel, ChatRequest, ChatResponse, ClaudeToolType, CompletionContext, ConfirmationData, Host, InlineCompletionModel, MarkdownData, ProgressData, SignalImpl
+from notebook_intelligence.api import AskUserQuestionData, BackendMessageType, CancelToken, ChatCommand, ChatModel, ChatRequest, ChatResponse, ClaudeToolType, CompletionContext, ConfirmationData, Host, InlineCompletionModel, MarkdownData, ProgressData, SignalImpl, ToolContent
 from notebook_intelligence.base_chat_participant import BaseChatParticipant
 import base64
 import logging
@@ -90,6 +90,29 @@ def tool_text_response(text: Any) -> dict[str, Any]:
             "text": str(text)
         }]
     }
+
+
+def tool_structured_response(content: ToolContent) -> dict[str, Any]:
+    """Build a Claude-SDK tool_result from a ToolContent (text + images)."""
+    blocks = []
+    for b in content.blocks:
+        btype = b.get("type")
+        if btype == "text":
+            blocks.append({"type": "text", "text": b.get("text", "")})
+        elif btype == "image":
+            blocks.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": b.get("mime", "image/png"),
+                    "data": b.get("data", ""),
+                },
+            })
+    if not blocks:
+        # Fall back to the flat summary if structured conversion produced
+        # nothing (shouldn't happen for a well-formed ToolContent).
+        blocks = [{"type": "text", "text": content.text_summary or ""}]
+    return {"content": blocks}
 
 def model_info_from_id(model_id: str) -> dict:
     """Get model info, checking cached models first then falling back to defaults."""
@@ -1078,10 +1101,12 @@ If you need to install a Python package within a notebook cell code, use %pip in
                 type_map[prop_name] = str
 
         @tool(ext_tool.name, ext_tool.description, type_map)
-        async def wrapper(args) -> str:
+        async def wrapper(args) -> Any:
             response = get_current_response()
             request = get_current_request()
             result = await ext_tool.handle_tool_call(request, response, {}, args)
+            if isinstance(result, ToolContent):
+                return tool_structured_response(result)
             return tool_text_response(str(result))
         return wrapper
 

@@ -148,7 +148,14 @@ class AIServiceManager(Host):
         else:
             self.unregister_chat_participant(self._claude_code_chat_participant)
 
-        self.chat_participants[DEFAULT_CHAT_PARTICIPANT_ID] = self._default_chat_participant
+        configured_default_id = self.nbi_config.default_chat_participant_id
+        if (
+            configured_default_id != DEFAULT_CHAT_PARTICIPANT_ID
+            and configured_default_id in self.chat_participants
+        ):
+            self.chat_participants[DEFAULT_CHAT_PARTICIPANT_ID] = self.chat_participants[configured_default_id]
+        else:
+            self.chat_participants[DEFAULT_CHAT_PARTICIPANT_ID] = self._default_chat_participant
 
     def update_mcp_servers(self):
         self._mcp_manager.update_mcp_servers(self.nbi_config.mcp)

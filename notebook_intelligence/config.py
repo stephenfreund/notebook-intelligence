@@ -95,6 +95,16 @@ class NBIConfig:
         return self.get('default_chat_mode', 'ask')
 
     @property
+    def default_chat_participant_id(self) -> str:
+        """Participant ID to route to when a prompt has no `@participant` prefix.
+        Defaults to 'default' (Claude Code / Copilot / Base, depending on the
+        active provider). Set to an extension-provided participant ID such as
+        'flowbook' to redirect unprefixed prompts to that participant instead.
+        Has no effect in Claude-Code mode, which forces all routing to the
+        Claude Code participant."""
+        return self.get('default_chat_participant_id', 'default')
+
+    @property
     def chat_model(self):
         return self.get('chat_model', {'provider': 'github-copilot', 'model': 'gpt-4.1'})
 

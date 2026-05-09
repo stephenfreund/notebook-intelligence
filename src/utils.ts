@@ -6,6 +6,38 @@ import { CodeEditor } from '@jupyterlab/codeeditor';
 import { encoding_for_model } from 'tiktoken';
 import { NotebookPanel } from '@jupyterlab/notebook';
 
+/**
+ * Yjs transaction origin tag used for every shared-model mutation NBI
+ * applies. Observer extensions (LogBook, etc.) can read this value off
+ * `Y.Transaction.origin` to attribute the change to NBI rather than to a
+ * human edit.
+ */
+export const NBI_TX_ORIGIN = 'nbi';
+
+interface IHasYDoc {
+  ydoc?: { transact: (f: () => void, origin?: unknown) => void };
+}
+
+/**
+ * Run `fn` inside a Yjs transaction whose origin is `NBI_TX_ORIGIN`.
+ *
+ * Used to wrap every shared-model mutation NBI performs so observers can
+ * tell NBI-driven edits apart from human-driven ones. Falls through to
+ * calling `fn` directly if the shared model does not expose an underlying
+ * Y.Doc (e.g. mock models in tests).
+ */
+export function asNbi<T>(sharedModel: unknown, fn: () => T): T {
+  const ydoc = (sharedModel as IHasYDoc | null | undefined)?.ydoc;
+  if (!ydoc) {
+    return fn();
+  }
+  let result!: T;
+  ydoc.transact(() => {
+    result = fn();
+  }, NBI_TX_ORIGIN);
+  return result;
+}
+
 const tiktoken_encoding = encoding_for_model('gpt-4o');
 
 export function removeAnsiChars(str: string): string {
@@ -190,7 +222,9 @@ export function applyCodeToSelectionInEditor(
   const startOffset = editor.getOffsetAt(selection.start);
   const endOffset = editor.getOffsetAt(selection.end);
 
-  editor.model.sharedModel.updateSource(startOffset, endOffset, code);
+  asNbi(editor.model.sharedModel, () =>
+    editor.model.sharedModel.updateSource(startOffset, endOffset, code)
+  );
   const numAddedLines = code.split('\n').length;
   const cursorLine = Math.min(
     selection.start.line + numAddedLines - 1,

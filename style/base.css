@@ -300,7 +300,9 @@ pre:has(.code-block-header) {
   padding: 3px;
   cursor: pointer;
   color: var(--jp-ui-font-color2);
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .chat-feedback-btn:hover {

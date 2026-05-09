@@ -352,3 +352,27 @@ Rules are applied in priority order (lower numbers first) and can be toggled on/
 ### Developer documentation
 
 For building locally and contributing see the [developer documentatation](CONTRIBUTING.md).
+
+### Integrating with Notebook Intelligence
+
+Every shared-model mutation NBI applies — cell insert/delete, cell-type
+swap, file-editor source replacement, inline-prompt code apply — runs
+inside a Yjs transaction whose `origin` is the string `'nbi'`. Observer
+extensions can read this off `Y.Transaction.origin` to attribute a
+change to NBI rather than to a human edit, without having to keep an
+allowlist of NBI command ids.
+
+The tag is exported as `NBI_TX_ORIGIN` from
+`@notebook-intelligence/notebook-intelligence`. Example:
+
+```ts
+import { NBI_TX_ORIGIN } from '@notebook-intelligence/notebook-intelligence';
+
+panel.model.sharedModel.changed.connect((_sm, args) => {
+  const origin = (args as { transaction?: { origin?: unknown } }).transaction
+    ?.origin;
+  if (origin === NBI_TX_ORIGIN) {
+    // This change came from NBI.
+  }
+});
+```

@@ -70,6 +70,7 @@ import claudeSvgstr from '../style/icons/claude.svg';
 
 import {
   applyCodeToSelectionInEditor,
+  asNbi,
   cellOutputAsText,
   compareSelections,
   extractLLMGeneratedCode,
@@ -841,11 +842,16 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
               ? currentWidget.content.widgets.length
               : activeCellIndex + 1;
 
-          currentWidget.model?.sharedModel.insertCell(activeCellIndex, {
-            cell_type: 'code',
-            metadata: { trusted: true },
-            source: args.code as string
-          });
+          const sharedModel = currentWidget.model?.sharedModel;
+          if (sharedModel) {
+            asNbi(sharedModel, () =>
+              sharedModel.insertCell(activeCellIndex, {
+                cell_type: 'code',
+                metadata: { trusted: true },
+                source: args.code as string
+              })
+            );
+          }
           currentWidget.content.activeCellIndex = activeCellIndex;
         } else {
           app.commands.execute('apputils:notify', {
@@ -1098,11 +1104,13 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
       const newCellIndex = isNewEmptyNotebook(model)
         ? 0
         : model.cells.length - 1;
-      model.insertCell(newCellIndex, {
-        cell_type: cellType,
-        metadata: { trusted: true },
-        source
-      });
+      asNbi(model, () =>
+        model.insertCell(newCellIndex, {
+          cell_type: cellType,
+          metadata: { trusted: true },
+          source
+        })
+      );
 
       return true;
     };
@@ -1170,11 +1178,13 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         const newCellIndex = isNewEmptyNotebook(model)
           ? 0
           : model.cells.length - 1;
-        model.insertCell(newCellIndex, {
-          cell_type: 'markdown',
-          metadata: { trusted: true },
-          source: args.source as string
-        });
+        asNbi(model, () =>
+          model.insertCell(newCellIndex, {
+            cell_type: 'markdown',
+            metadata: { trusted: true },
+            source: args.source as string
+          })
+        );
 
         return true;
       }
@@ -1192,11 +1202,13 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         const newCellIndex = isNewEmptyNotebook(model)
           ? 0
           : model.cells.length - 1;
-        model.insertCell(newCellIndex, {
-          cell_type: 'code',
-          metadata: { trusted: true },
-          source: args.source as string
-        });
+        asNbi(model, () =>
+          model.insertCell(newCellIndex, {
+            cell_type: 'code',
+            metadata: { trusted: true },
+            source: args.source as string
+          })
+        );
 
         return true;
       }
@@ -1233,11 +1245,13 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         const cellType = args.cellType as 'code' | 'markdown';
         const cell = model.getCell(cellIndex);
 
-        model.deleteCell(cellIndex);
-        model.insertCell(cellIndex, {
-          cell_type: cellType,
-          metadata: cell.metadata,
-          source: args.source as string
+        asNbi(model, () => {
+          model.deleteCell(cellIndex);
+          model.insertCell(cellIndex, {
+            cell_type: cellType,
+            metadata: cell.metadata,
+            source: args.source as string
+          });
         });
 
         return true;
@@ -1289,11 +1303,13 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         const cellIndex = args.cellIndex as number;
         const cellType = args.cellType as 'code' | 'markdown';
 
-        model.insertCell(cellIndex, {
-          cell_type: cellType,
-          metadata: { trusted: true },
-          source: args.source as string
-        });
+        asNbi(model, () =>
+          model.insertCell(cellIndex, {
+            cell_type: cellType,
+            metadata: { trusted: true },
+            source: args.source as string
+          })
+        );
 
         return true;
       }
@@ -1309,7 +1325,7 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
         const model = np.model.sharedModel;
         const cellIndex = args.cellIndex as number;
 
-        model.deleteCell(cellIndex);
+        asNbi(model, () => model.deleteCell(cellIndex));
 
         return true;
       }
@@ -1348,8 +1364,9 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
 
         const currentWidget = app.shell.currentWidget as FileEditorWidget;
         const editor = currentWidget.content.editor;
-        editor.model.sharedModel.setSource(args.content as string);
-        return editor.model.sharedModel.getSource();
+        const sharedModel = editor.model.sharedModel;
+        asNbi(sharedModel, () => sharedModel.setSource(args.content as string));
+        return sharedModel.getSource();
       }
     });
 
@@ -1940,5 +1957,6 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
 };
 
 export * from './tokens';
+export { NBI_TX_ORIGIN } from './utils';
 
 export default plugin;

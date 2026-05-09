@@ -39,6 +39,7 @@ python -m pytest tests/ -v            # verbose
 ## Architecture
 
 ### Frontend (`src/`)
+
 - **index.ts** - JupyterLab plugin activation, command registration, inline completion provider
 - **chat-sidebar.tsx** - Main chat UI component (message history, streaming, settings)
 - **api.ts** - WebSocket client connecting to the Python backend
@@ -46,6 +47,7 @@ python -m pytest tests/ -v            # verbose
 - **components/** - React UI components (settings panel, dialogs, etc.)
 
 ### Backend (`notebook_intelligence/`)
+
 - **extension.py** - Jupyter server extension: HTTP/WebSocket handlers, tool execution coordination
 - **ai_service_manager.py** - Orchestrates LLM providers, chat participants, MCP servers, and rules
 - **claude.py** - Claude SDK integration using `claude_agent_sdk` for agent mode
@@ -58,6 +60,7 @@ python -m pytest tests/ -v            # verbose
 - **llm_providers/** - Provider implementations: GitHub Copilot, OpenAI-compatible, Ollama, LiteLLM
 
 ### Generated output directories
+
 - `lib/` - Compiled TypeScript
 - `notebook_intelligence/labextension/` - Built JupyterLab extension assets
 

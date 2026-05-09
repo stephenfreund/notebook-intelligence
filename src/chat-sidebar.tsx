@@ -703,58 +703,68 @@ function ChatResponse(props: any) {
           </a>
         )}
       </div>
-      {msg.from === 'copilot' && !props.showGenerating && NBIAPI.config.feedbackEnabled && (
-        <div className="chat-message-feedback">
-          <button
-            className={`chat-feedback-btn ${msg.feedback === 'positive' ? 'selected' : ''}`}
-            onClick={() => {
-              props.onFeedback(msg.id, 'positive');
-              if (msg.feedback !== 'positive') {
-                props.telemetryEmitter.emitTelemetryEvent({
-                  type: TelemetryEventType.Feedback,
-                  data: {
-                    sentiment: 'positive',
-                    chatId: props.chatId,
-                    messageId: msg.id,
-                    model: msg.chatModel,
-                    participant: msg.participant?.id,
-                    timestamp: new Date().toISOString()
-                  }
-                });
-              }
-            }}
-            aria-label="Rate as helpful"
-            aria-pressed={msg.feedback === 'positive'}
-            title="Helpful"
-          >
-            {msg.feedback === 'positive' ? <VscThumbsupFilled /> : <VscThumbsup />}
-          </button>
-          <button
-            className={`chat-feedback-btn ${msg.feedback === 'negative' ? 'selected' : ''}`}
-            onClick={() => {
-              props.onFeedback(msg.id, 'negative');
-              if (msg.feedback !== 'negative') {
-                props.telemetryEmitter.emitTelemetryEvent({
-                  type: TelemetryEventType.Feedback,
-                  data: {
-                    sentiment: 'negative',
-                    chatId: props.chatId,
-                    messageId: msg.id,
-                    model: msg.chatModel,
-                    participant: msg.participant?.id,
-                    timestamp: new Date().toISOString()
-                  }
-                });
-              }
-            }}
-            aria-label="Rate as unhelpful"
-            aria-pressed={msg.feedback === 'negative'}
-            title="Not helpful"
-          >
-            {msg.feedback === 'negative' ? <VscThumbsdownFilled /> : <VscThumbsdown />}
-          </button>
-        </div>
-      )}
+      {msg.from === 'copilot' &&
+        !props.showGenerating &&
+        NBIAPI.config.feedbackEnabled && (
+          <div className="chat-message-feedback">
+            <button
+              className={`chat-feedback-btn ${msg.feedback === 'positive' ? 'selected' : ''}`}
+              onClick={() => {
+                props.onFeedback(msg.id, 'positive');
+                if (msg.feedback !== 'positive') {
+                  props.telemetryEmitter.emitTelemetryEvent({
+                    type: TelemetryEventType.Feedback,
+                    data: {
+                      sentiment: 'positive',
+                      chatId: props.chatId,
+                      messageId: msg.id,
+                      model: msg.chatModel,
+                      participant: msg.participant?.id,
+                      timestamp: new Date().toISOString()
+                    }
+                  });
+                }
+              }}
+              aria-label="Rate as helpful"
+              aria-pressed={msg.feedback === 'positive'}
+              title="Helpful"
+            >
+              {msg.feedback === 'positive' ? (
+                <VscThumbsupFilled />
+              ) : (
+                <VscThumbsup />
+              )}
+            </button>
+            <button
+              className={`chat-feedback-btn ${msg.feedback === 'negative' ? 'selected' : ''}`}
+              onClick={() => {
+                props.onFeedback(msg.id, 'negative');
+                if (msg.feedback !== 'negative') {
+                  props.telemetryEmitter.emitTelemetryEvent({
+                    type: TelemetryEventType.Feedback,
+                    data: {
+                      sentiment: 'negative',
+                      chatId: props.chatId,
+                      messageId: msg.id,
+                      model: msg.chatModel,
+                      participant: msg.participant?.id,
+                      timestamp: new Date().toISOString()
+                    }
+                  });
+                }
+              }}
+              aria-label="Rate as unhelpful"
+              aria-pressed={msg.feedback === 'negative'}
+              title="Not helpful"
+            >
+              {msg.feedback === 'negative' ? (
+                <VscThumbsdownFilled />
+              ) : (
+                <VscThumbsdown />
+              )}
+            </button>
+          </div>
+        )}
     </div>
   );
 }

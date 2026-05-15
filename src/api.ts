@@ -10,12 +10,46 @@ import {
   IChatCompletionResponseEmitter,
   IChatParticipant,
   IContextItem,
+  INbiChatToolCallSummary,
+  INbiToolCallStarted,
   ITelemetryEvent,
   IToolSelections,
+  NbiChatMode,
   RequestDataType,
   BackendMessageType,
   AssistantMode
 } from './tokens';
+import type { NbiChatObservable } from './chat-observable';
+
+/**
+ * Internal per-round bookkeeping. Created when a `chatRequest`,
+ * `generateCode`, or `inlineCompletionsRequest` begins; removed on
+ * StreamEnd. The shared `_messageReceived` dispatcher routes incoming
+ * websocket messages here by `msg.id`.
+ */
+interface IChatRound {
+  messageId: string;
+  chatId: string;
+  mode: NbiChatMode;
+  responseEmitter: IChatCompletionResponseEmitter;
+  startedAt: number;
+  textParts: string[];
+  toolCalls: INbiChatToolCallSummary[];
+  /**
+   * Set when the UI cancels the round (via `sendWebSocketMessage` with a
+   * Cancel* type). The terminating `StreamEnd` is still forwarded to the
+   * response emitter but no `responseCompleted` is fired on the observable.
+   */
+  cancelled: boolean;
+}
+
+/**
+ * Key for `_pendingToolCalls`. Tool calls are scoped per-round, but the
+ * map is global since `completeToolCall` is invoked without a round handle.
+ */
+function toolCallKey(messageId: string, callbackId: string): string {
+  return `${messageId}:${callbackId}`;
+}
 
 export enum GitHubCopilotLoginStatus {
   NotLoggedIn = 'NOT_LOGGED_IN',
@@ -155,6 +189,25 @@ export class NBIAPI {
   static config = new NBIConfig();
   static configChanged = this.config.changed;
   static githubLoginStatusChanged = new Signal<unknown, void>(this);
+  /**
+   * Per-round bookkeeping. Populated by `chatRequest` /
+   * `inlineCompletionsRequest` / `generateCode`; drained on `StreamEnd`.
+   * Replaces the previous pattern where each request registered its own
+   * `_messageReceived.connect` listener that was never disconnected.
+   */
+  static _activeRounds = new Map<string, IChatRound>();
+  /**
+   * Tool calls awaiting their `RunUICommandResponse`. Key is
+   * `${messageId}:${callbackId}` so we can correlate the result with the
+   * `RunUICommand` chunk that started it.
+   */
+  static _pendingToolCalls = new Map<string, INbiToolCallStarted>();
+  /** Set by the `chatObservablePlugin` activation in `index.ts`. */
+  static _chatObservable: NbiChatObservable | null = null;
+
+  static setChatObservable(observable: NbiChatObservable): void {
+    this._chatObservable = observable;
+  }
 
   static async initialize() {
     await this.fetchCapabilities();
@@ -176,7 +229,181 @@ export class NBIAPI {
           this.githubLoginStatusChanged.emit();
         });
       }
+      // Route round-scoped messages (every backend reply carries the round
+      // `id`). Status messages above have no `id`, so they're ignored here.
+      if (typeof msg.id === 'string') {
+        const round = this._activeRounds.get(msg.id);
+        if (round) {
+          this._handleRoundMessage(round, msg);
+        }
+      }
     });
+  }
+
+  /**
+   * Dispatcher for messages belonging to an active round.
+   *
+   * Observable signals fire **before** we forward the message to the
+   * round's response emitter. This ordering matters specifically for
+   * `RunUICommand`: the consumer (chat-sidebar) is what dispatches the
+   * tool call via `app.commands.execute(...)`, and observers (e.g. the
+   * LogBook origin tracker) need to know the call is starting *before*
+   * the command runs — otherwise the synchronous portion of the command
+   * body (setting active cell index, queueing kernel execution, etc.)
+   * emits its own signals while no AI window is open.
+   *
+   * For non-RunUICommand messages the ordering is functionally
+   * equivalent, but we keep it uniform so observers always see the
+   * lifecycle event before the consumer reacts.
+   */
+  private static _handleRoundMessage(round: IChatRound, msg: any): void {
+    const observable = this._chatObservable;
+
+    if (msg.type === BackendMessageType.StreamMessage) {
+      const delta = msg.data?.choices?.[0]?.delta;
+      if (typeof delta?.content === 'string') {
+        round.textParts.push(delta.content);
+      }
+      observable?.emitResponseChunk({
+        messageId: round.messageId,
+        kind: 'text',
+        raw: msg
+      });
+      round.responseEmitter.emit(msg);
+      return;
+    }
+
+    if (msg.type === BackendMessageType.RunUICommand) {
+      const callbackId = msg.data?.callback_id;
+      const commandId = msg.data?.commandId;
+      const args = msg.data?.args;
+      if (
+        typeof callbackId === 'string' &&
+        typeof commandId === 'string' &&
+        observable
+      ) {
+        const started: INbiToolCallStarted = {
+          messageId: round.messageId,
+          toolCallId: callbackId,
+          commandId,
+          args,
+          startedAt: performance.now()
+        };
+        this._pendingToolCalls.set(
+          toolCallKey(round.messageId, callbackId),
+          started
+        );
+        observable.emitToolCallStarted(started);
+      }
+      observable?.emitResponseChunk({
+        messageId: round.messageId,
+        kind: 'tool_call',
+        raw: msg
+      });
+      round.responseEmitter.emit(msg);
+      return;
+    }
+
+    if (msg.type === BackendMessageType.StreamEnd) {
+      // Any tool calls still pending at this point will never receive a
+      // matching `RunUICommandResponse`; mark them abandoned so observers
+      // see a paired completion for every started tool call.
+      for (const [key, pending] of Array.from(this._pendingToolCalls)) {
+        if (pending.messageId !== round.messageId) {
+          continue;
+        }
+        observable?.emitToolCallCompleted({
+          messageId: pending.messageId,
+          toolCallId: pending.toolCallId,
+          commandId: pending.commandId,
+          args: pending.args,
+          result: null,
+          error: 'abandoned',
+          durationMs: performance.now() - pending.startedAt
+        });
+        round.toolCalls.push({
+          toolCallId: pending.toolCallId,
+          commandId: pending.commandId,
+          status: 'abandoned'
+        });
+        this._pendingToolCalls.delete(key);
+      }
+      if (!round.cancelled) {
+        observable?.emitResponseCompleted({
+          messageId: round.messageId,
+          text: round.textParts.join(''),
+          toolCalls: round.toolCalls,
+          durationMs: performance.now() - round.startedAt
+        });
+      }
+      this._activeRounds.delete(round.messageId);
+      round.responseEmitter.emit(msg);
+      return;
+    }
+
+    observable?.emitResponseChunk({
+      messageId: round.messageId,
+      kind: 'status',
+      raw: msg
+    });
+    round.responseEmitter.emit(msg);
+  }
+
+  /**
+   * Reports a tool-call result back to the backend, and fires the matching
+   * `toolCallCompleted` observable signal. Replaces the previous pattern
+   * where chat-sidebar called `sendWebSocketMessage(... RunUICommandResponse ...)`
+   * directly, which left the observable blind to results.
+   */
+  static async completeToolCall(
+    messageId: string,
+    callbackId: string,
+    result: unknown,
+    error: string | null
+  ): Promise<void> {
+    const key = toolCallKey(messageId, callbackId);
+    const pending = this._pendingToolCalls.get(key);
+    const round = this._activeRounds.get(messageId);
+
+    if (pending && this._chatObservable) {
+      this._chatObservable.emitToolCallCompleted({
+        messageId: pending.messageId,
+        toolCallId: pending.toolCallId,
+        commandId: pending.commandId,
+        args: pending.args,
+        result,
+        error,
+        durationMs: performance.now() - pending.startedAt
+      });
+    }
+    if (pending) {
+      this._pendingToolCalls.delete(key);
+      if (round) {
+        round.toolCalls.push({
+          toolCallId: pending.toolCallId,
+          commandId: pending.commandId,
+          status: error === null ? 'ok' : 'error'
+        });
+      }
+    }
+
+    // The backend expects a JSON-serializable result. Match the previous
+    // chat-sidebar fallback so we don't change the wire contract.
+    let safeResult: unknown = result ?? 'void';
+    try {
+      JSON.stringify(safeResult);
+    } catch {
+      safeResult = 'Could not serialize the result';
+    }
+
+    await this.sendWebSocketMessage(
+      messageId,
+      RequestDataType.RunUICommandResponse,
+      {
+        callback_id: callbackId,
+        result: safeResult
+      }
+    );
   }
 
   static async initializeWebsocket() {
@@ -412,11 +639,27 @@ export class NBIAPI {
     toolSelections: IToolSelections,
     responseEmitter: IChatCompletionResponseEmitter
   ) {
-    this._messageReceived.connect((_, msg) => {
-      msg = JSON.parse(msg);
-      if (msg.id === messageId) {
-        responseEmitter.emit(msg);
-      }
+    const startedAt = performance.now();
+    this._activeRounds.set(messageId, {
+      messageId,
+      chatId,
+      mode: 'chat',
+      responseEmitter,
+      startedAt,
+      textParts: [],
+      toolCalls: [],
+      cancelled: false
+    });
+    this._chatObservable?.emitRequestStarted({
+      messageId,
+      chatId,
+      mode: 'chat',
+      prompt,
+      language,
+      filename,
+      additionalContext,
+      toolSelections,
+      startedAt
     });
     this._webSocket.send(
       JSON.stringify({
@@ -461,11 +704,26 @@ export class NBIAPI {
     responseEmitter: IChatCompletionResponseEmitter
   ) {
     const messageId = UUID.uuid4();
-    this._messageReceived.connect((_, msg) => {
-      msg = JSON.parse(msg);
-      if (msg.id === messageId) {
-        responseEmitter.emit(msg);
-      }
+    const startedAt = performance.now();
+    this._activeRounds.set(messageId, {
+      messageId,
+      chatId,
+      mode: 'generate-code',
+      responseEmitter,
+      startedAt,
+      textParts: [],
+      toolCalls: [],
+      cancelled: false
+    });
+    this._chatObservable?.emitRequestStarted({
+      messageId,
+      chatId,
+      mode: 'generate-code',
+      prompt,
+      language,
+      filename,
+      additionalContext: [],
+      startedAt
     });
     this._webSocket.send(
       JSON.stringify({
@@ -499,6 +757,16 @@ export class NBIAPI {
     messageType: RequestDataType,
     data: any
   ) {
+    if (
+      messageType === RequestDataType.CancelChatRequest ||
+      messageType === RequestDataType.CancelInlineCompletionRequest
+    ) {
+      const round = this._activeRounds.get(messageId);
+      if (round) {
+        round.cancelled = true;
+        this._chatObservable?.emitRequestCancelled({ messageId });
+      }
+    }
     this._webSocket.send(
       JSON.stringify({ id: messageId, type: messageType, data })
     );
@@ -513,11 +781,26 @@ export class NBIAPI {
     filename: string,
     responseEmitter: IChatCompletionResponseEmitter
   ) {
-    this._messageReceived.connect((_, msg) => {
-      msg = JSON.parse(msg);
-      if (msg.id === messageId) {
-        responseEmitter.emit(msg);
-      }
+    const startedAt = performance.now();
+    this._activeRounds.set(messageId, {
+      messageId,
+      chatId,
+      mode: 'inline',
+      responseEmitter,
+      startedAt,
+      textParts: [],
+      toolCalls: [],
+      cancelled: false
+    });
+    this._chatObservable?.emitRequestStarted({
+      messageId,
+      chatId,
+      mode: 'inline',
+      prompt: prefix,
+      language,
+      filename,
+      additionalContext: [],
+      startedAt
     });
     this._webSocket.send(
       JSON.stringify({

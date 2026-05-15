@@ -1611,32 +1611,29 @@ function SidebarComponent(props: any) {
             });
           } else if (response.type === BackendMessageType.RunUICommand) {
             const messageId = response.id;
-            let result = 'void';
+            const callbackId = response.data.callback_id;
+            // Inject the chat round id into the command args. External
+            // observers (e.g. LogBook) read this off `commandExecuted` to
+            // correlate the resulting cell/notebook events with the
+            // surrounding chat round. The backend never sees it because we
+            // only send the result back through `completeToolCall`.
+            const augmentedArgs = {
+              ...(response.data.args ?? {}),
+              __nbiChatMessageId: messageId
+            };
+            let result: unknown = 'void';
+            let error: string | null = null;
             try {
               result = await app.commands.execute(
                 response.data.commandId,
-                response.data.args
+                augmentedArgs
               );
-            } catch (error) {
-              result = `Error executing command: ${error}`;
+            } catch (err) {
+              error = `${err}`;
+              result = `Error executing command: ${err}`;
             }
 
-            const data = {
-              callback_id: response.data.callback_id,
-              result: result || 'void'
-            };
-
-            try {
-              JSON.stringify(data);
-            } catch (error) {
-              data.result = 'Could not serialize the result';
-            }
-
-            NBIAPI.sendWebSocketMessage(
-              messageId,
-              RequestDataType.RunUICommandResponse,
-              data
-            );
+            await NBIAPI.completeToolCall(messageId, callbackId, result, error);
           }
           setChatMessages([
             ...newList,

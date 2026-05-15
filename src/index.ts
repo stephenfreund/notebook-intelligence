@@ -56,6 +56,7 @@ import {
   GITHUB_COPILOT_PROVIDER_ID,
   IActiveDocumentInfo,
   ICellContents,
+  INbiChatObservable,
   INotebookIntelligence,
   ITelemetryEmitter,
   ITelemetryEvent,
@@ -63,6 +64,7 @@ import {
   RequestDataType,
   TelemetryEventType
 } from './tokens';
+import { NbiChatObservable } from './chat-observable';
 import sparklesSvgstr from '../style/icons/sparkles.svg';
 import copilotSvgstr from '../style/icons/copilot.svg';
 import sparklesWarningSvgstr from '../style/icons/sparkles-warning.svg';
@@ -1956,7 +1958,28 @@ const plugin: JupyterFrontEndPlugin<INotebookIntelligence> = {
   }
 };
 
+/**
+ * Standalone plugin that publishes the chat-observable token so external
+ * extensions can subscribe to NBI's chat-round lifecycle without depending
+ * on NBI internals.
+ *
+ * Registered separately from the main `plugin` so consumers can declare it
+ * as an optional dependency — if NBI is uninstalled, the token simply does
+ * not resolve and consumers degrade gracefully.
+ */
+const chatObservablePlugin: JupyterFrontEndPlugin<INbiChatObservable> = {
+  id: '@notebook-intelligence/notebook-intelligence:chat-observable',
+  description: 'Observable lifecycle of NBI chat rounds and tool calls.',
+  autoStart: true,
+  provides: INbiChatObservable,
+  activate: (): INbiChatObservable => {
+    const observable = new NbiChatObservable();
+    NBIAPI.setChatObservable(observable);
+    return observable;
+  }
+};
+
 export * from './tokens';
 export { NBI_TX_ORIGIN } from './utils';
 
-export default plugin;
+export default [plugin, chatObservablePlugin];
